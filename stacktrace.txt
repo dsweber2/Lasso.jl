@@ -1,0 +1,6 @@
+fit!
+
+cycle!
+
+
+added a canonicallink for multinomial

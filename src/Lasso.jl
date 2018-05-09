@@ -170,6 +170,23 @@ mutable struct LassoPath{S<:Union{LinearModel,GeneralizedLinearModel},T} <: Regu
     LassoPath{S,T}(m, nulldev::T, nullb0::T, λ::Vector{T}, autoλ::Bool, Xnorm::Vector{T}) where {S,T} =
         new(m, nulldev, nullb0, λ, autoλ, Xnorm)
 end
+# TODO: LassoPath Multinomial case
+# Multinomial case; coefs needs to be a vector of length depending on the multinomial that's fed in
+mutable struct LassoPath{S<:Union{LinearModel,GeneralizedLinearModel},T} <: RegularizationPath{S,T}
+    m::S
+    nulldev::T                    # null deviance
+    nullb0::T                     # intercept of null model, if one was fit
+    λ::Vector{T}                  # shrinkage parameters
+    autoλ::Bool                   # whether λ is automatically determined
+    Xnorm::Vector{T}              # original squared norms of columns of X before standardization
+    pct_dev::Vector{T}            # percent deviance explained by each model
+    coefs::SparseMatrixCSC{T,Int} # model coefficients
+    b0::Vector{T}                 # model intercepts
+    niter::Int                    # number of coordinate descent iterations
+
+    LassoPath{S,T}(m, nulldev::T, nullb0::T, λ::Vector{T}, autoλ::Bool, Xnorm::Vector{T}) where {S,T} =
+        new(m, nulldev, nullb0, λ, autoλ, Xnorm)
+end
 
 function Base.show(io::IO, path::RegularizationPath)
     prefix = isa(path.m, GeneralizedLinearModel) ? string(typeof(distfun(path)).name.name, " ") : ""
@@ -279,9 +296,10 @@ end
 
 defaultalgorithm(d::Normal, l::IdentityLink, n::Int, p::Int) = p > 5n ? NaiveCoordinateDescent : CovarianceCoordinateDescent
 defaultalgorithm(d::UnivariateDistribution, l::Link, n::Int, p::Int) = NaiveCoordinateDescent
+defaultalgorithm(d::MultivariateDistribution, l::Link, n::Int, p::Int) = NaiveCoordinateDescent
 
 function StatsBase.fit{T<:AbstractFloat,V<:FPVector}(::Type{LassoPath},
-                                                     X::AbstractMatrix{T}, y::V, d::UnivariateDistribution=Normal(),
+                                                     X::AbstractMatrix{T}, y::V, d::Union{UnivariateDistribution, MultivariateDistribution}=Normal(),
                                                      l::Link=canonicallink(d);
                                                      wts::Union{FPVector,Void}=ones(T, length(y)),
                                                      offset::V=similar(y, 0),
@@ -292,19 +310,21 @@ function StatsBase.fit{T<:AbstractFloat,V<:FPVector}(::Type{LassoPath},
                                                      algorithm::Type=defaultalgorithm(d, l, size(X, 1), size(X, 2)),
                                                      dofit::Bool=true,
                                                      irls_tol::Real=1e-7, randomize::Bool=RANDOMIZE_DEFAULT,
-                                                     maxncoef::Int=min(size(X, 2), 2*size(X, 1)),
+                                                     maxncoef::Int=min( size(X, 2), 2*size(X, 1)),
                                                      penalty_factor::Union{Vector,Void}=nothing,
                                                      fitargs...)
+    @assert α!=0 "don't use this package if you want to do ridge regression."
     size(X, 1) == size(y, 1) || DimensionMismatch("number of rows in X and y must match")
     n = length(y)
     length(wts) == n || error("length(wts) = $(length(wts)) should be 0 or $n")
+    d<:MultivariateDistribution || error("currently need data to be N×K")
 
     # Standardize predictors if requested
     if standardize
         Xnorm = vec(full(std(X, 1, corrected=false)))
-        if any(x -> x == zero(T), Xnorm) 
-            warn("""One of the predicators (columns of X) is a constant, so it can not be standardized. 
-                  To include a constant predicator set standardize = false and intercept = false""") 
+        if any(x -> x == zero(T), Xnorm)
+            warn("""One of the predicators (columns of X) is a constant, so it can not be standardized.
+                  To include a constant predicator set standardize = false and intercept = false""")
         end
         for i = 1:length(Xnorm)
             @inbounds Xnorm[i] = 1/Xnorm[i]
@@ -340,6 +360,79 @@ function StatsBase.fit{T<:AbstractFloat,V<:FPVector}(::Type{LassoPath},
     end
     path
 end
+
+
+
+
+
+
+# Multinomial case when the input is 2D (which the other case should call)
+function StatsBase.fit{T<:AbstractFloat,V<:FPVector}(::Type{LassoPath},
+                                                     X::AbstractMatrix{T}, y::BitArray,
+                                                     d::MultivariateDistribution=Multinomial(size(y,2)),
+                                                     l::Link=canonicallink(d);
+                                                     wts::Union{FPVector,Void}=ones(T, length(y)),
+                                                     offset::V=similar(y, 0),
+                                                     α::Number=one(eltype(y)), nλ::Int=100,
+                                                     λminratio::Number=ifelse(size(X, 1) < size(X, 2), 0.01, 1e-4),
+                                                     λ::Union{Vector,Void}=nothing, standardize::Bool=true,
+                                                     intercept::Bool=true,
+                                                     algorithm::Type=defaultalgorithm(d, l, size(X, 1), size(X, 2)),
+                                                     dofit::Bool=true,
+                                                     irls_tol::Real=1e-7, randomize::Bool=RANDOMIZE_DEFAULT,
+                                                     maxncoef::Int=min( size(X, 2), 2*size(X, 1)),
+                                                     penalty_factor::Union{Vector,Void}=nothing,
+                                                     fitargs...)
+    @assert α!=0 "don't use this package if you want to do ridge regression."
+    @assert length(d.p) == size(y,2) "the 2nd dimension of y represents the different classes"
+    size(X, 1) == size(y, 1) || DimensionMismatch("number of rows in X and y must match")
+    n = length(y)
+    length(wts) == n || error("length(wts) = $(length(wts)) should be 0 or $n")
+
+    # Standardize predictors if requested
+    if standardize
+        Xnorm = vec(full(std(X, 1, corrected=false)))
+        if any(x -> x == zero(T), Xnorm)
+            warn("""One of the predicators (columns of X) is a constant, so it can not be standardized.
+                  To include a constant predicator set standardize = false and intercept = false""")
+        end
+        for i = 1:length(Xnorm)
+            @inbounds Xnorm[i] = 1/Xnorm[i]
+        end
+        X = X .* Xnorm.'
+    else
+        Xnorm = T[]
+    end
+
+    # Lasso initialization
+    α = convert(T, α)
+    λminratio = convert(T, λminratio)
+    coefitr = randomize ? RandomCoefficientIterator() : (1:0)
+
+    # penalty_factor (ω) defaults to a vector of ones
+    ω = penalty_factor
+    if !isa(ω, Void)
+        # following glmnet rescale penalty factors to sum to the number of coefficients
+        ω = rescale(ω, size(X, 2))
+    end
+
+    cd = algorithm{T,intercept,typeof(X),typeof(coefitr),typeof(ω)}(X, α, maxncoef, 1e-7, coefitr, ω)
+
+    # GLM response initialization
+    autoλ = λ == nothing
+    model, nulldev, nullb0, λ = build_model(X, y, d, l, cd, λminratio, λ, wts .* T(1/sum(wts)),
+                                            Vector{T}(offset), α, nλ, ω, intercept, irls_tol)
+
+    # Fit path
+    path = LassoPath{typeof(model),T}(model, nulldev, nullb0, λ, autoλ, Xnorm)
+    if dofit
+        fit!(path; irls_tol=irls_tol, fitargs...)
+    end
+    path
+end
+
+
+
 
 StatsBase.nobs(path::RegularizationPath) = length(path.m.rr.y)
 

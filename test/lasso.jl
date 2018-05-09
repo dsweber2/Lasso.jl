@@ -1,5 +1,45 @@
 using Lasso, GLM, Distributions, GLMNet, FactCheck
 
+
+
+
+# multinomial shenanigans
+using GLM, Distributions, Lasso
+Multinomial(6,3)
+Binomial
+Normal()
+
+
+
+# difference we need to account for
+# log(P(G=1|x))-log(P(G=2|x)) = β_0+x*β
+"instead of a single (β_0,β), we have (β_{0ℓ}, β_ℓ) for ℓ=1,...,K"
+"We need a N×K indicator response matrix (going to need a way to convert an input of just numbers to this)"
+"vary just one class at a time (HOW)"
+"one major hurdle is that the `null-models` (probably the wrong name) are derived from GLM, which doesn't have the Multivariate case worked out"
+k=10
+X = randn(100,10)
+X[:,1]+=[ones(50); zeros(50)]
+y = [ones(50); zeros(50)]
+thing = fit(LassoPath,X,y,Binomial(3))
+Binomial(3) <: UnivariateDistribution
+typeof(Binomial(3)) <:UnivariateDistribution
+Multinomial(3).p
+reff = Ref{Array{Float64,2}}(X)
+Array{Bool,2}(2,30)
+BitArray(300,5)*[1,2,3,4,5]
+supertype(typeof(Multinomial(3)))
+supertype(typeof(Binomial(3)))
+ # Lasso.LassoPath{GLM.GeneralizedLinearModel{GLM.GlmResp{Array{Float64,1}, Distributions.Binomial{Float64}, GLM.LogitLink}, Lasso.NaiveCoordinateDescent{Float64, true, Array{Float64, 2}, Lasso.RandomCoefficientIterator, Void}}, Float64}
+thing.coefs
+thing.m.rr
+thing.m.pp
+
+Multinomial(k::Int) = Multinomial(1,k)
+
+GlmResp
+GeneralizedLinearModel
+subtypes(GeneralizedLinearModel)
 datapath = joinpath(dirname(@__FILE__), "data")
 
 testpath(T::DataType, d::Normal, l::GLM.Link, nsamples::Int, nfeatures::Int) =

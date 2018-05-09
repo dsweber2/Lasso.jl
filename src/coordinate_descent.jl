@@ -21,6 +21,7 @@ end
 abstract type CoordinateDescent{T,Intercept,M<:AbstractMatrix} <: LinPred end
 
 mutable struct NaiveCoordinateDescent{T,Intercept,M<:AbstractMatrix,S<:CoefficientIterator,W<:Union{Vector,Void}} <: CoordinateDescent{T,Intercept,M}
+    # TODO can M be Mmap, so as to allow for large datasets? At the very least, figure out some way to point to an existing matrix rather than make a copy, which seems to be happening
     X::M                          # original design matrix
     μy::T                         # mean of y at current weights
     μX::Vector{T}                 # mean of X at current weights (in predictor order)
